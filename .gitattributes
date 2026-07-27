@@ -1,0 +1,5 @@
+# ASIX ships this source with CRLF line endings throughout. Keep every file byte-identical to the
+# vendor tarball on all platforms — the base commit is the pristine vendor release precisely so that
+# `git diff` against it shows the fix and nothing else. Letting git normalise line endings on
+# checkout would rewrite thousands of lines and destroy that guarantee.
+* -text

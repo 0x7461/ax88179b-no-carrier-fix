@@ -136,6 +136,26 @@ the 179B interrupt-status bit layout in `ax88179_178a.c`, or derive carrier from
 Ground truth for the interrupt format would come from a `usbmon` capture of the interrupt endpoint on
 Windows (link up) versus Linux (link down), diffing the status bytes. PRs welcome.
 
+## AI assistance disclosure
+
+This fix was developed with heavy use of an LLM (Claude, by Anthropic), and it seems only fair to say
+so plainly — particularly if you are reviewing the diff or weighing it for upstream.
+
+**What the model did:** read the vendor source and traced the `NO-CARRIER` symptom to the
+interrupt-endpoint link bit; noticed that the vendor's own BMSR polling path already existed but was
+unreachable on hardware that *has* an interrupt endpoint; wrote the patch, `dkms.conf`, the udev rule,
+and this README.
+
+**What a human did:** all of the testing. Every claim on this page — the negotiated gigabit link, the
+stable `carrier_changes`, DHCP, the ping results, the switch-flap conclusion — comes from observed
+behaviour on real hardware, not from the model's say-so. The model was also wrong at least once along
+the way: it initially blamed the driver for a link flap that turned out to be a managed switch
+shutting the port, which is why that false lead is documented above rather than quietly dropped.
+
+**What this means for you:** judge the diff on its merits. It is two hunks; it is short enough to read
+in full, and you should. It has been verified on exactly one adapter and one kernel (see "Tested on"),
+so treat it as a working fix for a specific problem rather than a broadly validated patch.
+
 ## License
 
 GPL-2.0, inherited from ASIX's GPL driver release. Copyright © 2022 ASIX Electronics Corporation for
