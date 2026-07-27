@@ -21,7 +21,8 @@ from the **USB interrupt endpoint**:
 axdev->link = event->link & AX_INT_PPLS_LINK;
 ```
 
-On this AX88179B silicon that bit is always 0, so the driver calls `netif_carrier_off()` forever.
+On this AX88179B silicon that bit reads 0 — **unless some driver has performed an initialisation that
+mainline never does** (see the next section) — so the driver calls `netif_carrier_off()` forever.
 Meanwhile the PHY is perfectly healthy — the MII `BMSR` link bit reads correctly, which is exactly why
 `ethtool` shows a negotiated gigabit link while the kernel insists there's no carrier.
 
@@ -32,7 +33,38 @@ adapter *has* an interrupt endpoint. It's simply feeding a bogus link bit.
 **The fix: compile in the polling path and force it on.** When forced, the interrupt URB is suppressed
 (`ax_usb_submit_intr_urb()` early-returns) and carrier is driven entirely by the MII status that works.
 
-This is an [open, unfixed mainline bug](https://lkml.iu.edu/2511.1/04339.html).
+This is an [open, unfixed mainline bug](https://lkml.iu.edu/2511.1/04339.html) — still unfixed as of
+**6.18.40** (checked against the 6.18.38/39/40 changelogs and the mainline history of
+`drivers/net/usb/ax88179_178a.c`).
+
+## Why this bug looks intermittent — read this before concluding anything
+
+The most confusing thing about this bug: **it sometimes appears to fix itself.**
+
+If another driver initialises the chip first — the Windows driver, or ASIX's own — and you then
+**warm-reboot** into Linux, the *unmodified mainline driver* reports carrier correctly and everything
+looks fine. A warm reboot doesn't drop VBUS, so the adapter never loses power and keeps the register
+state the previous driver programmed. Mainline inherits an already-configured chip.
+
+The illusion breaks the moment the adapter actually loses power — unplug it, or cold-boot far enough to
+cut VBUS — and `NO-CARRIER` is back.
+
+This is an effective trap. During development it produced a confidently wrong conclusion — that a kernel
+upgrade had fixed the driver upstream — which survived until the adapter was physically unplugged.
+
+**Deterministic reproducer:**
+
+1. Unplug the adapter for ~10 s, then replug. *This step is the whole point: it must lose power.*
+2. Bind mainline `ax88179_178a` — it negotiates 1000/Full and reports `Link detected: no`, indefinitely.
+3. Let the ASIX vendor driver (or Windows) initialise the chip, then warm-reboot so VBUS is preserved.
+4. The **same unmodified mainline driver** now reports carrier correctly.
+
+> **If you are testing any fix for this bug, power-cycle the adapter first.** Otherwise you may be
+> measuring leftover chip state rather than your change.
+
+It also suggests the real defect is narrower than "mainline misreads a bit": more likely **mainline
+omits an initialisation step that makes the link bit valid**, and both the Windows driver and the ASIX
+driver perform it. That distinction matters for anyone attempting a proper upstream fix.
 
 ## The patch
 
@@ -66,8 +98,24 @@ means no wired network after the next kernel bump.
 sudo cp ax_usb_nic_blacklist.conf /etc/modprobe.d/
 ```
 
-> ⚠ Trade-off: if a future DKMS rebuild ever fails you get *no* wired driver rather than a broken one.
-> Check `dkms status` first when debugging.
+> ⚠ **`blacklist` alone is not enough.** On the test system mainline still loaded and bound the device
+> after a reboot *and* after a replug, with the blacklist in place and parsed (`modprobe -c` showed it).
+> `blacklist` only suppresses *alias-based* autoload. The shipped file therefore also contains:
+>
+> ```
+> install ax88179_178a /bin/false
+> ```
+>
+> which blocks explicit and dependency loads too. Verify with `modprobe ax88179_178a` — it should fail
+> with `Error running install command '/bin/false'`. If mainline is already loaded, `rmmod` it once;
+> the block prevents loading, not unloading.
+>
+> If your init system builds an initramfs, rebuild it after copying this file (e.g.
+> `dracut --force`) so the config is present on the next boot.
+
+> ⚠ Trade-off: with mainline fully blocked, a failed DKMS rebuild leaves you with *no* wired driver
+> rather than a broken one. Check `dkms status` first when debugging, and keep a fallback kernel that
+> still has the module built.
 
 **Force the vendor USB configuration.** The AX88179B exposes three USB configurations and boots into
 CDC-NCM (config 2), where `cdc_ncm` claims it as a dumb pipe with no PHY control — `ethtool` shows no
@@ -122,19 +170,30 @@ network, it's the network.
 
 ## Tested on
 
-- Void Linux, kernel **6.18.37**, `x86_64` — vendor source claims support "up to kernel 6.14.x"; no
-  kernel-API drift was hit building against 6.18.
+- Void Linux, kernels **6.18.37** and **6.18.40**, `x86_64` — vendor source claims support "up to kernel
+  6.14.x"; no kernel-API drift was hit building against 6.18. DKMS rebuilt cleanly across the
+  6.18.37 → 6.18.40 upgrade with no intervention.
 - Adapter `0b95:1790`, `iProduct` = `AX88179B`, USB 3 (5 Gbps).
+- Verified across a reboot and a physical replug: `ax_usb_nic` claims the device and brings up a
+  **cold-reset** chip (carrier, gigabit, DHCP). That last part matters — it shows the vendor driver does
+  the initialisation itself rather than inheriting state, unlike mainline.
 
 Note that **the brand on the box tells you nothing** — adapters sold under different brands turned out
 to carry identical ASIX silicon. Check `lsusb` for `0b95`, not the label.
 
 ## Upstreaming
 
-Not yet submitted. The mainline-appropriate fix is narrower than this vendor-driver workaround: correct
-the 179B interrupt-status bit layout in `ax88179_178a.c`, or derive carrier from MII BMSR there too.
-Ground truth for the interrupt format would come from a `usbmon` capture of the interrupt endpoint on
-Windows (link up) versus Linux (link down), diffing the status bytes. PRs welcome.
+Not yet submitted, and still worth doing — the bug is confirmed unfixed upstream as of 6.18.40 and the
+LKML report is still open.
+
+The mainline-appropriate fix is narrower than this vendor-driver workaround. Given the intermittency
+finding above, the most promising line is **adding the missing initialisation to `ax88179_178a`** rather
+than correcting a bit position or switching carrier detection to MII BMSR — the polling route only
+sidesteps the interrupt path instead of fixing it.
+
+Ground truth would come from a `usbmon` capture comparing **register writes during probe**, Windows (or
+the ASIX driver) versus mainline — not just the interrupt-endpoint status bytes, since those are a
+symptom of the chip being unconfigured rather than the cause. PRs welcome.
 
 ## AI assistance disclosure
 
@@ -148,9 +207,20 @@ and this README.
 
 **What a human did:** all of the testing. Every claim on this page — the negotiated gigabit link, the
 stable `carrier_changes`, DHCP, the ping results, the switch-flap conclusion — comes from observed
-behaviour on real hardware, not from the model's say-so. The model was also wrong at least once along
-the way: it initially blamed the driver for a link flap that turned out to be a managed switch
-shutting the port, which is why that false lead is documented above rather than quietly dropped.
+behaviour on real hardware, not from the model's say-so.
+
+**The model was wrong twice**, and both errors are documented above rather than quietly dropped, because
+they're the two traps most likely to catch someone else:
+
+1. It blamed the driver for a link flap that turned out to be a managed switch shutting the port.
+2. It concluded from a post-reboot observation that a kernel upgrade had fixed the bug upstream. It had
+   not — the chip was carrying leftover configuration across a warm reboot. The correction came from the
+   hardware owner recalling that plugging into Windows and rebooting had produced the same illusion for
+   years, which is what prompted the physical replug that disproved it.
+
+Point 2 is worth dwelling on if you're using an LLM on hardware problems: the model reasoned correctly
+from the evidence it had, and was still wrong, because the evidence was contaminated by state it
+couldn't observe.
 
 **What this means for you:** judge the diff on its merits. It is two hunks; it is short enough to read
 in full, and you should. It has been verified on exactly one adapter and one kernel (see "Tested on"),
