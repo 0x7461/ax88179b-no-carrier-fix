@@ -2606,10 +2606,11 @@ static int ax_probe(struct usb_interface *intf, const struct usb_device_id *id)
 		axdev->ep1_bytes_per_interval = (udev->speed <= USB_SPEED_HIGH) 
 			? 8 : le16_to_cpu(comp->wBytesPerInterval);
 #ifdef ENABLE_INT_POLLING
-	if (axdev->ep1_bytes_per_interval == 0)
-    	axdev->int_polling_enable = true;
-	else
-    	axdev->int_polling_enable = false;
+	/* AX88179B (0b95:1790) reports a bogus link bit over the interrupt
+	 * endpoint, so the default gate (poll only when there is no intr EP)
+	 * never fires and carrier stays 0. Force BMSR polling unconditionally;
+	 * MDIO link status reads correctly on this silicon. */
+	axdev->int_polling_enable = true;
 #endif
 
 	device_set_wakeup_enable(&udev->dev, ax_can_wakeup(axdev));

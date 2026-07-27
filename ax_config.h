@@ -9,7 +9,7 @@
 #define ENABLE_AUTODETACH_FUNC      0
 #define ENABLE_MAC_PASS             0
 #define ENABLE_INT_AGGRESSIVE       1
-#define ENABLE_INT_POLLING          0
+#define ENABLE_INT_POLLING          1
 #define ENABLE_AUTOSUSPEND          0
 #define ENABLE_TX_TASKLET           0
 #define ENABLE_RX_TASKLET           0

@@ -1,0 +1,11 @@
+# AX88179B (0b95:1790) — see ~/projects/ax88179/PLAN.md
+#
+# 1. Force USB config 1 (vendor-specific) so a real Ethernet driver binds. The dongle boots in
+#    config 2 (CDC-NCM), where cdc_ncm claims it as a dumb pipe with no PHY control.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0b95", ATTR{idProduct}=="1790", ATTR{bConfigurationValue}!="1", ATTR{bConfigurationValue}="1"
+
+# 2. Disable USB autosuspend — aggressive autosuspend re-enumerated the dongle every ~4s.
+#    ORDER MATTERS: this must come AFTER the bConfigurationValue line above. Setting the
+#    config re-inits the device and resets power/control, so the original rule (which set
+#    power/control first) silently lost this write.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0b95", ATTR{idProduct}=="1790", ATTR{power/control}="on"
