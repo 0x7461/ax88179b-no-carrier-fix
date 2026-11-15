@@ -1,4 +1,4 @@
-# AX88179B (0b95:1790) — see ~/projects/ax88179/PLAN.md
+# AX88179B (0b95:1790) — see README.md, Install
 #
 # 1. Force USB config 1 (vendor-specific) so a real Ethernet driver binds. The dongle boots in
 #    config 2 (CDC-NCM), where cdc_ncm claims it as a dumb pipe with no PHY control.

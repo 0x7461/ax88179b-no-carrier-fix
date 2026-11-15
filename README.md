@@ -135,6 +135,25 @@ That rule also disables USB autosuspend for this device, which prevented a re-en
 
 Then replug the adapter, or reboot.
 
+### Notes from a Void Linux install (2026-11-14)
+
+- **`/etc/udev/rules.d` may not exist.** Void ships eudev, whose rules live in
+  `/usr/lib/udev/rules.d`; the `/etc` override directory is only created when something puts a rule
+  there. `install -m644 50-ax88179b.rules /etc/udev/rules.d/` then fails with
+  `Not a directory`. `sudo mkdir -p /etc/udev/rules.d` first — `/etc` is the right home, since
+  `/usr/lib/udev/rules.d` is package-managed.
+- **The DKMS rebuild hook is not `dkms autoinstall`.** Void's `/etc/kernel.d/post-install/10-dkms`
+  walks `/var/lib/dkms/*` itself and builds + installs every registered module for the new kernel, so
+  `AUTOINSTALL="yes"` in `/etc/dkms/framework.conf` has no effect there (nothing calls
+  `dkms autoinstall`). What the hook *does* check is
+  `/lib/modules/$VERSION/build/include` — i.e. a `linux<series>-headers` package matching the new
+  kernel. Without it the hook prints `cannot build DKMS modules! missing kernel headers package` and
+  exits 0, skipping the build silently. With mainline blacklisted, that leaves **no** wired driver, so
+  keep the headers package in the upgrade set and check `dkms status` after every kernel bump.
+- These paths are outside chezmoi on that machine: a reinstall loses
+  `/etc/udev/rules.d/50-ax88179b.rules` and `/etc/modprobe.d/ax_usb_nic_blacklist.conf`, and they have
+  to be re-copied from this repo.
+
 ## Verify
 
 ```sh
@@ -174,6 +193,13 @@ network, it's the network.
   6.14.x"; no kernel-API drift was hit building against 6.18. DKMS rebuilt cleanly across the
   6.18.37 → 6.18.40 upgrade with no intervention.
 - Adapter `0b95:1790`, `iProduct` = `AX88179B`, USB 3 (5 Gbps).
+- **Second machine, 2026-11-14** — Void Linux kernel **6.18.63_1** (past the 6.18.40 checked above):
+  the vendor source built unchanged through DKMS, the device came up as `version 3.20` / `speed 5000`
+  on a USB 3 port with config forced to 1, and `ax_usb_nic` 4.1.0 bound. Against the same router over
+  wifi: **2.9–3.3 ms** RTT (wifi 5.7 ms), upload **87 vs 80 Mbit/s**, download equal at ~90 Mbit/s
+  (plan-limited), `carrier_changes` steady at 2 across ~300 MB of transfers. Before the fix the same
+  dongle sat on `cdc_ncm` / config 2 and managed **20 Mbit/s at 14 ms** — which is what an unfixed
+  install looks like in latency terms, not just as `NO-CARRIER`.
 - Verified across a reboot and a physical replug: `ax_usb_nic` claims the device and brings up a
   **cold-reset** chip (carrier, gigabit, DHCP). That last part matters — it shows the vendor driver does
   the initialisation itself rather than inheriting state, unlike mainline.
